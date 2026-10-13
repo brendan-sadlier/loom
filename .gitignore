@@ -4,7 +4,8 @@
 *.dll
 *.so
 *.dylib
-bins/*
+/bin/
+/dist/
 
 # Test binary, built with `go test -c`
 *.test
@@ -31,3 +32,8 @@ go.work.sum
 .vscode/
 
 .docs/
+
+# Project Specific
+/.loom/
+.DS_Store
+
