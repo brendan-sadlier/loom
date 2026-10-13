@@ -1,0 +1,66 @@
+name: ci.yml
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -tags gotoolchain ./cmd/loom/...
+      - name: race (unix only)
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+
+  standalone:
+    name: cmd/loom builds without go.work
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - run: cd cmd/loom && go build ./... && go vet ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: "**/go.sum"
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: golangci-lint (runtime module)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: .
+      - name: golangci-lint (cli module)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: cmd/loom
