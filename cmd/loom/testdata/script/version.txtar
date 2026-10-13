@@ -1,0 +1,13 @@
+# --version prints "loom <version>" on stdout, nothing on stderr, exit 0.
+exec loom --version
+stdout '^loom \S+$'
+! stderr .
+
+# Unknown flags are usage errors: exit 2 with a loom: prefixed message.
+exitcode 2 loom --bogus
+stderr '^loom: unknown flag: --bogus$'
+! stdout .
+
+# Running targets is not implemented in Phase 00 and must fail loudly, not silently.
+exitcode 2 loom build
+stderr 'not implemented yet'
