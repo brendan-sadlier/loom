@@ -59,7 +59,10 @@ func Main(args []string, stdio Stdio) int {
 	root.SetErr(stdio.Stderr)
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
+		_, err := fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
+		if err != nil {
+			return 0
+		}
 		var ec ExitCoder
 		if errors.As(err, &ec) {
 			return ec.ExitCode()

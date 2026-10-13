@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/brendan-sadlier/loom/cmd/loom/internal/cli"
 	"github.com/rogpeppe/go-internal/testscript"
+
+	"github.com/brendan-sadlier/loom/cmd/loom/internal/cli"
 )
 
 func TestMain(m *testing.M) {
