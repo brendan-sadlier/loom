@@ -52,7 +52,12 @@ func TestRuntimeGoModHasNoRequires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}(f)
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if strings.HasPrefix(strings.TrimSpace(sc.Text()), "require") {
