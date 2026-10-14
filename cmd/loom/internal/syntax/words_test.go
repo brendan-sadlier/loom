@@ -1,8 +1,6 @@
 package syntax
 
 import (
-	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -13,37 +11,6 @@ func rawLine(s string) line {
 		text:  s,
 		spans: []span{{off: 0, physLine: 0, physCol: 1}},
 	}
-}
-
-// fmtWord mirrors the Word format Dump will use (P01-T05).
-func fmtWord(w Word) string {
-	var b strings.Builder
-	if w.Quoted {
-		b.WriteByte('Q')
-	}
-	b.WriteByte('[')
-	for i, s := range w.Segs {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		switch s := s.(type) {
-		case Text:
-			b.WriteString("T:" + strconv.Quote(s.S))
-		case VarRef:
-			b.WriteString("V:" + s.Name)
-		case Call:
-			b.WriteString("C:" + s.Name + "(")
-			for j, a := range s.Args {
-				if j > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(fmtWord(a))
-			}
-			b.WriteByte(')')
-		}
-	}
-	b.WriteByte(']')
-	return b.String()
 }
 
 func TestParseRaw(t *testing.T) {
@@ -69,7 +36,7 @@ func TestParseRaw(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := fmtWord(w); got != tt.want {
+			if got := dumpWord(w); got != tt.want {
 				t.Errorf("got %s, want %s", got, tt.want)
 			}
 			if w.Quoted {
@@ -84,8 +51,8 @@ func TestParseRawEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !w.IsEmpty() || fmtWord(w) != "[]" {
-		t.Errorf("got %s, want []", fmtWord(w))
+	if !w.IsEmpty() || dumpWord(w) != "[]" {
+		t.Errorf("got %s, want []", dumpWord(w))
 	}
 }
 
@@ -129,7 +96,7 @@ func TestLexWords(t *testing.T) {
 		t.Fatalf("got %d words, want %d", len(words), len(want))
 	}
 	for i, w := range want {
-		if got := fmtWord(words[i]); got != w.dump {
+		if got := dumpWord(words[i]); got != w.dump {
 			t.Errorf("word %d = %s, want %s", i, got, w.dump)
 		}
 		if words[i].Pos.Col != w.col {
@@ -150,7 +117,7 @@ func TestLexWordsQuoting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(words) != 1 || fmtWord(words[0]) != tt.want {
+			if len(words) != 1 || dumpWord(words[0]) != tt.want {
 				t.Fatalf("got %d words %v, want %s", len(words), words, tt.want)
 			}
 		})
