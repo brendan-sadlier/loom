@@ -14,7 +14,7 @@ func TestPosString(t *testing.T) {
 		{"full", Pos{File: "Loomfile", Line: 3, Col: 7}, "Loomfile:3:7"},
 		{"no column", Pos{File: "Loomfile", Line: 3}, "Loomfile:3"},
 		{"zero", Pos{}, "?"},
-		{"file only", Pos{File: "Loomfile"}, "?"},
+		{"file only", Pos{File: "Loomfile"}, "Loomfile"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
