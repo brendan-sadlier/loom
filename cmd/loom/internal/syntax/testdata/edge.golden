@@ -1,0 +1,29 @@
+File edge.loom
+Shell 1:1 [[T:"bash"]]
+Assign 3:1 CC := [T:"gcc"]
+Assign 4:1 msg := [T:"\"hello # not a comment\" #literal"]
+Assign 5:1 dollar := [T:"cost $5"]
+Assign 6:1 empty := []
+Assign 7:1 path := [V:CC T:"x"]
+If 9:1 cond=(== [V:os] [T:"windows"])
+  then:
+    Assign 10:5 rm := [T:"del /q"]
+  else:
+    If 11:8 cond=(&& [C:env([T:"CI"])] (! [C:exists([T:".nocache"])]))
+      then:
+        Assign 12:5 rm := [T:"rm -rf --verbose"]
+      else:
+        If 14:5 cond=(|| (== [V:os] [T:"linux"]) (== [V:os] [T:"darwin"]))
+          then:
+            Assign 15:9 rm := [T:"rm -rf"]
+Target 19:1 names=[[T:"bin/app"]] var=(CGO_ENABLED := [T:"0"])
+Target 20:1 names=[[T:"bin/app"]] prereqs=[[T:"main.go"] [T:"util.go"]]
+Target 23:1 names=[[T:"fmt"] [T:"lint"]]
+  body@24:1
+  | go $out ./...
+Target 27:1 names=[[T:"%.o"]] prereqs=[[T:"%.c"]] attrs=[bash]
+  body@28:1
+  | $CC -c $in -o $out
+Task 33:1 name=deploy params=[env target=Q[T:"prod"]] prereqs=[[T:"lint"]] orderonly=[[T:"fmt"]] attrs=[sh] doc="First line.\nSecond line."
+  body@34:1
+  | echo $env $target

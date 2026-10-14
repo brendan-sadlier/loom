@@ -1,0 +1,41 @@
+File example.loom
+Dotenv 2:1
+Include 3:1 [[T:"tools/*.loom"]]
+Assign 5:1 bin := [T:"./bin"]
+Assign 6:1 app := [V:bin T:"/server" V:exe]
+Assign 7:1 srcs := [C:glob([T:"**/*.go"]) T:" go.mod go.sum"]
+Assign 8:1 flags ?= [T:"-trimpath"]
+If 10:1 cond=[C:env([T:"CI"])]
+  then:
+    Assign 11:5 flags += [T:"-ldflags=-s"]
+Go 14:1 body@15:1
+  | import "time"
+  |
+  | func stamp() string { return time.Now().UTC().Format(time.RFC3339) }
+Target 21:1 names=[[T:"default"]] prereqs=[[V:app]] doc="Build the server binary."
+Target 23:1 names=[[V:app]] prereqs=[[V:srcs]] orderonly=[[V:bin]]
+  body@24:1
+  | go build $flags -o $out .
+Target 27:1 names=[[V:bin]]
+  body@28:1
+  | mkdir -p $out
+Target 31:1 names=[[T:"{stem}.pb.go"]] prereqs=[[T:"proto/{stem}.proto"]]
+  body@32:1
+  | protoc --go_out=. $in
+Task 36:1 name=test prereqs=[[V:app]] doc="Run unit tests."
+  body@37:1
+  | go test ./...
+Task 41:1 name=bench params=[pkg=Q[T:"./..."] count=Q[T:"1"]] doc="Run benchmarks: loom bench ./internal/... 5"
+  body@42:1
+  | go test -bench . -count $count $pkg
+Task 46:1 name=release prereqs=[[T:"test"]] attrs=[go] doc="Tag and push a release."
+  body@47:1
+  | v, err := sh.Output(ctx, "git", "describe", "--tags", "--abbrev=0")
+  | if err != nil {
+  |     return err
+  | }
+  | ctx.Logf("releasing %s at %s", v, stamp())
+  | return sh.Run(ctx, "git", "push", "origin", v)
+Task 55:1 name=clean
+  body@56:1
+  | rm -rf $bin

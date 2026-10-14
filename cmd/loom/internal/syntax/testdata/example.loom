@@ -1,0 +1,57 @@
+# Loomfile — Groove API
+dotenv
+include tools/*.loom
+
+bin   := ./bin
+app   := $bin/server$exe
+srcs  := $(glob **/*.go) go.mod go.sum
+flags ?= -trimpath
+
+if $(env CI) {
+    flags += -ldflags=-s
+}
+
+go {
+    import "time"
+
+    func stamp() string { return time.Now().UTC().Format(time.RFC3339) }
+}
+
+# Build the server binary.
+default: $app
+
+$app: $srcs | $bin {
+    go build $flags -o $out .
+}
+
+$bin: {
+    mkdir -p $out
+}
+
+{stem}.pb.go: proto/{stem}.proto {
+    protoc --go_out=. $in
+}
+
+# Run unit tests.
+task test: $app {
+    go test ./...
+}
+
+# Run benchmarks: loom bench ./internal/... 5
+task bench pkg="./..." count="1" {
+    go test -bench . -count $count $pkg
+}
+
+# Tag and push a release.
+task release: test @go {
+    v, err := sh.Output(ctx, "git", "describe", "--tags", "--abbrev=0")
+    if err != nil {
+        return err
+    }
+    ctx.Logf("releasing %s at %s", v, stamp())
+    return sh.Run(ctx, "git", "push", "origin", v)
+}
+
+task clean {
+    rm -rf $bin
+}
