@@ -1,6 +1,7 @@
 package syntax
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -8,6 +9,37 @@ import (
 	"strings"
 	"testing"
 )
+
+// malformed is the §6.3 table; also used as fuzz seeds.
+var malformed = []struct{ src, want string }{
+	{"build: a {\n    echo hi", `Loomfile:1:1: unterminated recipe body`},
+	{"build: a {\necho hi\n}", `Loomfile:2:1: recipe body lines must be indented further than the header; close the body with "}" at the header's indentation`},
+	{"foo bar", `Loomfile:1:1: expected assignment, target declaration or directive`},
+	{"clean { rm -rf bin }", `Loomfile:1:7: recipe body must start on the line after "{"`},
+	{"task {", `Loomfile:1:6: expected task name`},
+	{"task my-task: x", `Loomfile:1:6: invalid task name "my-task": must match [A-Za-z_][A-Za-z0-9_]*`},
+	{"build: @rust {\n    x\n}", `Loomfile:1:8: unknown attribute "@rust" (expected @sh, @go, @bash or @pwsh)`},
+	{"x := $(glob a", `Loomfile:1:6: unterminated "$(": missing ")"`},
+	{"x := $ y", `Loomfile:1:6: invalid "$" sequence; use $name, ${name}, $(fn ...) or $$`},
+	{`x := "abc`, `Loomfile:1:6: unterminated quoted string`},
+	{"if $x == y", `Loomfile:1:1: expected "{" at end of if line`},
+	{"if {\n}", `Loomfile:1:4: expected expression`},
+	{"} else {", `Loomfile:1:1: unexpected "}"`},
+	{"include", `Loomfile:1:1: include requires at least one path`},
+	{"if $x {\n  y := 1\n  }", `Loomfile:3:3: "}" must be at the indentation of the matching "if"`},
+	{"a: b | c | d", `Loomfile:1:10: only one "|" allowed`},
+}
+
+func TestMalformed(t *testing.T) {
+	for i, tt := range malformed {
+		t.Run(strconv.Itoa(i+1), func(t *testing.T) {
+			_, err := Parse("Loomfile", []byte(tt.src))
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("input %q\nerr  = %v\nwant = %q", tt.src, err, tt.want)
+			}
+		})
+	}
+}
 
 func TestParseHeaders(t *testing.T) {
 	src := "shell bash\n" +
@@ -251,32 +283,37 @@ func lineDiff(want, got string) string {
 	return b.String()
 }
 
-// TestMalformed is the §6.3 table; err.Error() must match exactly.
-func TestMalformed(t *testing.T) {
-	tests := []struct{ src, want string }{
-		{"build: a {\n    echo hi", `Loomfile:1:1: unterminated recipe body`},
-		{"build: a {\necho hi\n}", `Loomfile:2:1: recipe body lines must be indented further than the header; close the body with "}" at the header's indentation`},
-		{"foo bar", `Loomfile:1:1: expected assignment, target declaration or directive`},
-		{"clean { rm -rf bin }", `Loomfile:1:7: recipe body must start on the line after "{"`},
-		{"task {", `Loomfile:1:6: expected task name`},
-		{"task my-task: x", `Loomfile:1:6: invalid task name "my-task": must match [A-Za-z_][A-Za-z0-9_]*`},
-		{"build: @rust {\n    x\n}", `Loomfile:1:8: unknown attribute "@rust" (expected @sh, @go, @bash or @pwsh)`},
-		{"x := $(glob a", `Loomfile:1:6: unterminated "$(": missing ")"`},
-		{"x := $ y", `Loomfile:1:6: invalid "$" sequence; use $name, ${name}, $(fn ...) or $$`},
-		{`x := "abc`, `Loomfile:1:6: unterminated quoted string`},
-		{"if $x == y", `Loomfile:1:1: expected "{" at end of if line`},
-		{"if {\n}", `Loomfile:1:4: expected expression`},
-		{"} else {", `Loomfile:1:1: unexpected "}"`},
-		{"include", `Loomfile:1:1: include requires at least one path`},
-		{"if $x {\n  y := 1\n  }", `Loomfile:3:3: "}" must be at the indentation of the matching "if"`},
-		{"a: b | c | d", `Loomfile:1:10: only one "|" allowed`},
+func FuzzParse(f *testing.F) {
+	goldens, err := filepath.Glob(filepath.Join("testdata", "*.loom"))
+	if err != nil {
+		f.Fatal(err)
 	}
-	for i, tt := range tests {
-		t.Run(strconv.Itoa(i+1), func(t *testing.T) {
-			_, err := Parse("Loomfile", []byte(tt.src))
-			if err == nil || err.Error() != tt.want {
-				t.Fatalf("input %q\nerr  = %v\nwant = %q", tt.src, err, tt.want)
+	for _, g := range goldens {
+		src, err := os.ReadFile(g)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(src)
+	}
+	for _, m := range malformed {
+		f.Add([]byte(m.src))
+	}
+	for _, s := range []string{"", "\r\n", "task", "if {", "}\n", "$(", "\"", "a: b {\n"} {
+		f.Add([]byte(s))
+	}
+
+	f.Fuzz(func(t *testing.T, src []byte) {
+		file, err := Parse("fuzz", src) // must return, must not panic
+		if err != nil {
+			var d *Diagnostic
+			if !errors.As(err, &d) {
+				t.Fatalf("Parse returned non-Diagnostic error %T: %v", err, err)
 			}
-		})
-	}
+			if !d.Pos.IsValid() {
+				t.Fatalf("Diagnostic without position: %v", err)
+			}
+			return
+		}
+		_ = file.Dump() // must not panic on any successfully parsed tree
+	})
 }
