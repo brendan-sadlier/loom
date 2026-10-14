@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const msgCloser = `expected "}" , "} else {" or "} else if ... {"`
+
 // Parse parses src as a Loomfile named name (used in positions and errors).
 func Parse(name string, src []byte) (*File, error) {
 	p := &parser{r: newReader(name, src), file: name}
@@ -34,7 +36,7 @@ type parser struct {
 // line starting with "}". In that case the reader is rewound to that line so the
 // caller can re-read it with next().
 func (p *parser) parseItems(stopAtBrace bool, blockIndent string) ([]Item, error) {
-	_ = blockIndent // checked by the caller (parseIf, P01-T07)
+	_ = blockIndent // the closing "}" indent is checked by parseIf via closeLine
 	var items []Item
 	for !p.r.eof() {
 		// Rule 2: comment lines are detected on the raw line, before stripping.
@@ -85,7 +87,20 @@ func (p *parser) parseItem(l line) (Item, error) {
 		p.pending = nil
 		return p.parseDirective(l, firstWord(t))
 	}
-	// Rules 7 (if) and 8 (go {) are added in P01-T07.
+	switch firstWord(t) {
+	case "task": // rule 5
+		return p.parseTask(l)
+	case "include", "dotenv", "shell": // rule 6
+		p.pending = nil
+		return p.parseDirective(l, firstWord(t))
+	case "if": // rule 7
+		p.pending = nil
+		return p.parseIf(l)
+	}
+	if t == "go {" { // rule 8; "go" alone falls through to rule 10
+		p.pending = nil
+		return p.parseGoBlock(l)
+	}
 	if headerColon(t) >= 0 { // rule 9
 		return p.parseTarget(l)
 	}
@@ -227,6 +242,99 @@ func (p *parser) parseTask(l line) (*TaskDecl, error) {
 		}
 	}
 	return d, nil
+}
+
+func (p *parser) parseIf(l line) (*If, error) {
+	return p.parseIfAt(l, len(l.text)-len(strings.TrimLeft(l.text, " \t")))
+}
+
+// parseIfAt parses an if header whose "if" keyword starts at l.text[at]. It is
+// also used for "} else if", where l is the closing line of the previous block.
+func (p *parser) parseIfAt(l line, at int) (*If, error) {
+	pos := l.posAt(at)
+	s := l.text[at+len("if"):]
+	base := at + len("if")
+	rt := strings.TrimRight(s, " \t")
+	n := len(rt) - 1
+	if n < 0 || rt[n] != '{' || (n > 0 && !isSpace(rt[n-1])) {
+		return nil, Errorf(pos, `expected "{" at end of if line`)
+	}
+	cond, err := parseExpr(l, s[:n], base)
+	if err != nil {
+		return nil, err
+	}
+	x := &If{P: pos, Cond: cond}
+	if x.Then, err = p.parseItems(true, l.indent); err != nil {
+		return nil, err
+	}
+	p.pending = nil
+
+	cl, off, err := p.closeLine(l.indent, pos)
+	if err != nil {
+		return nil, err
+	}
+	rest := cl.text[off+1:]
+	switch f := strings.Fields(rest); {
+	case len(f) == 0:
+		return x, nil
+	case len(f) == 2 && f[0] == "else" && f[1] == "{":
+		if x.Else, err = p.parseItems(true, l.indent); err != nil {
+			return nil, err
+		}
+		if x.Else == nil {
+			x.Else = []Item{} // nil means "no else"
+		}
+		p.pending = nil
+		cl2, off2, err := p.closeLine(l.indent, pos)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(cl2.text[off2+1:]) != "" {
+			return nil, Errorf(cl2.posAt(off2), "%s", msgCloser)
+		}
+		return x, nil
+	case f[0] == "else":
+		j := skipSpace(cl.text, off+1) + len("else")
+		if j < len(cl.text) && isSpace(cl.text[j]) {
+			k := skipSpace(cl.text, j)
+			if firstWord(cl.text[k:]) == "if" {
+				sub, err := p.parseIfAt(cl, k)
+				if err != nil {
+					return nil, err
+				}
+				x.Else = []Item{sub}
+				return x, nil
+			}
+		}
+	}
+	return nil, Errorf(cl.posAt(off), "%s", msgCloser)
+}
+
+// closeLine reads the "}" line that parseItems stopped at, checking its
+// indentation. off is the offset of "}" in the returned line's text.
+func (p *parser) closeLine(indent string, ifPos Pos) (line, int, error) {
+	if p.r.eof() {
+		return line{}, 0, Errorf(ifPos, `unterminated "if" block`)
+	}
+	cl, err := p.r.next()
+	if err != nil {
+		return line{}, 0, err
+	}
+	off := len(cl.text) - len(strings.TrimLeft(cl.text, " \t"))
+	if cl.indent != indent {
+		return line{}, 0, Errorf(cl.posAt(off), `"}" must be at the indentation of the matching "if"`)
+	}
+	return cl, off, nil
+}
+
+func (p *parser) parseGoBlock(l line) (*GoBlock, error) {
+	off := len(l.text) - len(strings.TrimLeft(l.text, " \t"))
+	b, next, err := readBody(p.file, p.r.raw(), l.last+1, l.indent, l.pos)
+	if err != nil {
+		return nil, err
+	}
+	p.r.seek(next)
+	return &GoBlock{P: l.posAt(off), Body: b}, nil
 }
 
 // defaultEnd returns the end of a parameter default starting at s[k]: a quoted

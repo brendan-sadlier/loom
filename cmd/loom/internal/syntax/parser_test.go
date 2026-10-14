@@ -83,3 +83,106 @@ func TestMalformedHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestParseIf(t *testing.T) {
+	src := "if $os == windows {\n" +
+		"    rm := del /q\n" +
+		"} else if $(env CI) && !$(exists .nocache) {\n" +
+		"    rm := rm -rf --verbose\n" +
+		"} else {\n" +
+		"    if ($os == linux || $os == darwin) {\n" +
+		"        rm := rm -rf\n" +
+		"    }\n" +
+		"}\n" +
+		"go {\n" +
+		"    import \"time\"\n" +
+		"}\n" +
+		"if $x {\n" +
+		"    a: {\n" +
+		"        echo\n" +
+		"    }\n" +
+		"} else {\n" +
+		"}\n"
+	const want = `File t.loom
+If 1:1 cond=(== [V:os] [T:"windows"])
+  then:
+    Assign 2:5 rm := [T:"del /q"]
+  else:
+    If 3:8 cond=(&& [C:env([T:"CI"])] (! [C:exists([T:".nocache"])]))
+      then:
+        Assign 4:5 rm := [T:"rm -rf --verbose"]
+      else:
+        If 6:5 cond=(|| (== [V:os] [T:"linux"]) (== [V:os] [T:"darwin"]))
+          then:
+            Assign 7:9 rm := [T:"rm -rf"]
+Go 10:1 body@11:1
+  | import "time"
+If 13:1 cond=[V:x]
+  then:
+    Target 14:5 names=[[T:"a"]]
+      body@15:1
+      | echo
+  else:
+`
+	f, err := Parse("t.loom", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Dump(); got != want {
+		t.Errorf("Dump mismatch\n--- got\n%s--- want\n%s", got, want)
+	}
+}
+
+func TestMalformedIf(t *testing.T) {
+	tests := []struct{ src, want string }{
+		{"if $x == y", `Loomfile:1:1: expected "{" at end of if line`},
+		{"if {\n}", `Loomfile:1:4: expected expression`},
+		{"if $x {\n  y := 1\n  }", `Loomfile:3:3: "}" must be at the indentation of the matching "if"`},
+		{"if $x {\n  y := 1", `Loomfile:1:1: unterminated "if" block`},
+		{"if ($x {\n}", `Loomfile:1:8: expected ")"`},
+		{"if $x ) {\n}", `Loomfile:1:7: unexpected token ")" in expression`},
+		{"if $x == {\n}", `Loomfile:1:10: expected expression`},
+		{"if $x {\n} els {\n}", `Loomfile:2:1: expected "}" , "} else {" or "} else if ... {"`},
+		{"if $x {\n} else {\n} else {\n}", `Loomfile:3:1: expected "}" , "} else {" or "} else if ... {"`},
+		{"go", `Loomfile:1:1: expected assignment, target declaration or directive`},
+		{"go {\n    x", `Loomfile:1:1: unterminated recipe body`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.src, func(t *testing.T) {
+			_, err := Parse("Loomfile", []byte(tt.src))
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDocComments(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{"two lines", "# A\n# B\ntask t\n", "A\nB"},
+		{"blank separates", "# A\n\na: b\n", ""},
+		{"directive discards", "# A\ninclude x\ntask t\n", ""},
+		{"no space after hash", "#A\na: b\n", "A"},
+		{"indented comment", "  # A\na: b\n", "A"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse("t", []byte(tt.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			switch x := f.Items[len(f.Items)-1].(type) {
+			case *TaskDecl:
+				got = x.Doc
+			case *TargetDecl:
+				got = x.Doc
+			default:
+				t.Fatalf("last item is %T", x)
+			}
+			if got != tt.want {
+				t.Errorf("doc = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
