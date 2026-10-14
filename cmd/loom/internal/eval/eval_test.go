@@ -466,3 +466,92 @@ func TestPrereqGlob(t *testing.T) {
 		t.Errorf("no match: %v (hint %q)", err, hintOf(d))
 	}
 }
+
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func evalTree(t *testing.T, files map[string]string) (*model.Project, error) {
+	t.Helper()
+	dir := writeTree(t, files)
+	return Evaluate(Options{File: filepath.Join(dir, "Loomfile"), GOOS: "linux", GOARCH: "amd64"})
+}
+
+func TestEvaluateInclude(t *testing.T) {
+	p, err := evalTree(t, map[string]string{
+		"Loomfile":     "include tools/*.loom extra.loom\nall: $tool_out\n",
+		"tools/a.loom": "tool_out := a.out\na.out: {\n    touch $out\n}\n",
+		"tools/b.loom": "shell bash\ntask b {\n    echo b\n}\n",
+		"extra.loom":   "include tools/none-*.loom tools/a.loom\ntask extra {\n    echo extra\n}\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	for _, f := range p.Files {
+		files = append(files, strings.TrimPrefix(f, p.Root+"/"))
+	}
+	if !slices.Equal(files, []string{"Loomfile", "tools/a.loom", "tools/b.loom", "extra.loom"}) {
+		t.Errorf("Files = %q", files)
+	}
+	if !slices.Equal(p.Order, []string{"a.out", "b", "extra", "all"}) {
+		t.Errorf("Order = %q", p.Order)
+	}
+	if got := p.Targets["b"].Recipe.Shell; !slices.Equal(got, []string{"bash"}) {
+		t.Errorf("b shell = %q", got)
+	}
+	if p.Targets["extra"].Recipe.Shell != nil || p.Targets["a.out"].Recipe.Shell != nil {
+		t.Error("shell directive leaked across files")
+	}
+	if p.Targets["a.out"].Pos.String() != "tools/a.loom:2:1" {
+		t.Errorf("a.out pos = %s", p.Targets["a.out"].Pos)
+	}
+	if !slices.Equal(p.Targets["all"].Prereqs, []string{"a.out"}) {
+		t.Errorf("all prereqs = %q", p.Targets["all"].Prereqs)
+	}
+	if p.Overrides != nil || p.Vars["root"] != p.Root {
+		t.Errorf("overrides %v, root var %q", p.Overrides, p.Vars["root"])
+	}
+}
+
+func TestIncludeCycle(t *testing.T) {
+	_, err := evalTree(t, map[string]string{"Loomfile": "include a.loom\n", "a.loom": "include Loomfile\n"})
+	if err == nil || err.Error() != "a.loom:1:9: include cycle: Loomfile -> a.loom -> Loomfile" {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestEvaluateErrors(t *testing.T) {
+	tests := []struct{ src, want string }{
+		{"x := $(glob *.go)\n", `Loomfile:1:6: unknown function "glob"`},
+		{"if $x {\n}\n", `Loomfile:1:1: "if" is not implemented until Phase 09`},
+		{"dotenv\n", `Loomfile:1:1: "dotenv" is not implemented until Phase 11`},
+		{"include missing.loom\n", `Loomfile:1:9: included file "missing.loom" not found`},
+		{"shell bash\nshell zsh\n", `Loomfile:2:1: shell already set for this file at Loomfile:1:1`},
+	}
+	for _, tt := range tests {
+		_, err := evalTree(t, map[string]string{"Loomfile": tt.src})
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("%q:\n got %v\nwant %s", tt.src, err, tt.want)
+		}
+	}
+}
+
+func TestEvaluateMissingFile(t *testing.T) {
+	_, err := Evaluate(Options{File: filepath.Join(t.TempDir(), "Loomfile")})
+	var d *syntax.Diagnostic
+	if !errors.As(err, &d) || d.Msg != "file not found" || d.Hint != "use -f FILE or -C DIR" {
+		t.Errorf("err = %v", err)
+	}
+}
