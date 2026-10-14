@@ -68,3 +68,85 @@ func newScope(opts Options, root string) (*scope, error) {
 	}
 	return s, nil
 }
+
+// checkAssignable rejects built-in and reserved names for file and target assignments.
+func checkAssignable(pos syntax.Pos, name string) error {
+	if isBuiltin(name) {
+		return syntax.Errorf(pos, "cannot assign to built-in variable %q", name)
+	}
+	if isReserved(name) {
+		return syntax.Errorf(pos, "%q is reserved for recipes and cannot be assigned", name)
+	}
+	return nil
+}
+
+// assign applies a file-level assignment. CLI overrides win over every operator.
+func (s *scope) assign(pos syntax.Pos, name string, op syntax.AssignOp, value string) error {
+	if err := checkAssignable(pos, name); err != nil {
+		return err
+	}
+	if _, ok := s.overrides[name]; ok {
+		return nil
+	}
+	switch op {
+	case syntax.OpSet:
+		s.vars[name] = value
+	case syntax.OpDefault:
+		if _, ok := s.vars[name]; ok {
+			return nil
+		}
+		if v, ok := s.env.Lookup(name); ok {
+			s.vars[name] = v
+			return nil
+		}
+		s.vars[name] = value
+	case syntax.OpAppend:
+		cur, ok := s.vars[name]
+		if !ok {
+			return syntax.Errorf(pos, "cannot append to undefined variable %q", name)
+		}
+		s.vars[name] = appendValue(cur, value)
+	default:
+		panic("eval: unknown assignment operator " + string(op))
+	}
+	return nil
+}
+
+// assignTarget applies a target-specific assignment into vars. The OS environment is
+// not consulted for "?="; overrides still win.
+func (s *scope) assignTarget(vars map[string]string, pos syntax.Pos, name string, op syntax.AssignOp, value string) error {
+	if err := checkAssignable(pos, name); err != nil {
+		return err
+	}
+	if _, ok := s.overrides[name]; ok {
+		return nil
+	}
+	switch op {
+	case syntax.OpSet:
+		vars[name] = value
+	case syntax.OpDefault:
+		if _, ok := vars[name]; !ok {
+			vars[name] = value
+		}
+	case syntax.OpAppend:
+		cur, ok := vars[name]
+		if !ok {
+			cur, ok = s.vars[name]
+		}
+		if !ok {
+			return syntax.Errorf(pos, "cannot append to undefined variable %q", name)
+		}
+		vars[name] = appendValue(cur, value)
+	default:
+		panic("eval: unknown assignment operator " + string(op))
+	}
+	return nil
+}
+
+// appendValue joins with a single space, without a leading space when cur is empty.
+func appendValue(cur, value string) string {
+	if cur == "" {
+		return value
+	}
+	return cur + " " + value
+}

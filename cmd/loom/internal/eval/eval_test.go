@@ -2,6 +2,7 @@ package eval
 
 import (
 	"errors"
+	"maps"
 	"runtime"
 	"slices"
 	"strings"
@@ -179,4 +180,126 @@ func hintOf(d *syntax.Diagnostic) string {
 		return ""
 	}
 	return d.Hint
+}
+
+type asg struct {
+	op    syntax.AssignOp
+	value string
+}
+
+func TestAssignPrecedence(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       []string
+		overrides map[string]string
+		ops       []asg
+		want      string
+		wantErr   string
+	}{
+		{"env then set", []string{"a=E"}, nil, []asg{{syntax.OpSet, "F"}}, "F", ""},
+		{"env then default", []string{"a=E"}, nil, []asg{{syntax.OpDefault, "F"}}, "E", ""},
+		{"default no env", nil, nil, []asg{{syntax.OpDefault, "F"}}, "F", ""},
+		{"set then default", nil, nil, []asg{{syntax.OpSet, "F"}, {syntax.OpDefault, "G"}}, "F", ""},
+		{"override wins", nil, map[string]string{"a": "C"},
+			[]asg{{syntax.OpSet, "F"}, {syntax.OpAppend, "G"}, {syntax.OpDefault, "H"}}, "C", ""},
+		{"append to empty", nil, nil, []asg{{syntax.OpSet, ""}, {syntax.OpAppend, "x"}}, "x", ""},
+		{"append", nil, nil, []asg{{syntax.OpSet, "x"}, {syntax.OpAppend, "y z"}}, "x y z", ""},
+		{"append undefined", nil, nil, []asg{{syntax.OpAppend, "x"}}, "",
+			`Loomfile:1:1: cannot append to undefined variable "a"`},
+	}
+	pos := syntax.Pos{File: "Loomfile", Line: 1, Col: 1}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := newScope(Options{Environ: tt.env, Overrides: tt.overrides}, "/r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, a := range tt.ops {
+				if err = s.assign(pos, "a", a.op, a.value); err != nil {
+					break
+				}
+			}
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := s.vars["a"]; got != tt.want {
+				t.Errorf("a = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAssignRejected(t *testing.T) {
+	s, _ := newScope(Options{}, "/r")
+	pos := syntax.Pos{File: "Loomfile", Line: 1, Col: 1}
+	for name, want := range map[string]string{
+		"os":  `Loomfile:1:1: cannot assign to built-in variable "os"`,
+		"out": `Loomfile:1:1: "out" is reserved for recipes and cannot be assigned`,
+	} {
+		if err := s.assign(pos, name, syntax.OpSet, "x"); err == nil || err.Error() != want {
+			t.Errorf("assign %s: %v, want %q", name, err, want)
+		}
+		if err := s.assignTarget(map[string]string{}, pos, name, syntax.OpSet, "x"); err == nil || err.Error() != want {
+			t.Errorf("assignTarget %s: %v, want %q", name, err, want)
+		}
+	}
+}
+
+func TestAssignTarget(t *testing.T) {
+	s, _ := newScope(Options{Environ: []string{"e=ENV"}, Overrides: map[string]string{"o": "C"}}, "/r")
+	s.vars["g"] = "global"
+	pos := syntax.Pos{File: "Loomfile", Line: 1, Col: 1}
+	vars := map[string]string{}
+	steps := []struct {
+		name string
+		op   syntax.AssignOp
+		val  string
+	}{
+		{"e", syntax.OpDefault, "file"}, // env not consulted
+		{"g", syntax.OpAppend, "more"},  // falls back to global
+		{"g", syntax.OpAppend, "again"}, // now appends to target var
+		{"o", syntax.OpSet, "ignored"},  // override wins: not stored
+		{"d", syntax.OpSet, "1"},
+		{"d", syntax.OpDefault, "2"},
+	}
+	for _, st := range steps {
+		if err := s.assignTarget(vars, pos, st.name, st.op, st.val); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]string{"e": "file", "g": "global more again", "d": "1"}
+	if !maps.Equal(vars, want) {
+		t.Errorf("vars = %v, want %v", vars, want)
+	}
+	if s.vars["g"] != "global" {
+		t.Errorf("global mutated: %q", s.vars["g"])
+	}
+	err := s.assignTarget(vars, pos, "nope", syntax.OpAppend, "x")
+	if err == nil || err.Error() != `Loomfile:1:1: cannot append to undefined variable "nope"` {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestEvalAssign(t *testing.T) {
+	ev := testEvaluator(t, nil)
+	pos := syntax.Pos{File: "Loomfile", Line: 1, Col: 1}
+	self := syntax.Word{Pos: syntax.Pos{File: "Loomfile", Line: 1, Col: 6}, Segs: []syntax.Segment{syntax.VarRef{Name: "v"}}}
+
+	err := ev.evalAssign(&syntax.Assign{P: pos, Name: "v", Op: syntax.OpSet, Value: self})
+	if err == nil || err.Error() != `Loomfile:1:6: undefined variable "v"` {
+		t.Fatalf("x := $x undefined: %v", err)
+	}
+	ev.scope.vars["v"] = "a"
+	if err := ev.evalAssign(&syntax.Assign{P: pos, Name: "v", Op: syntax.OpAppend, Value: self}); err != nil {
+		t.Fatal(err)
+	}
+	if ev.scope.vars["v"] != "a a" {
+		t.Errorf("x += $x = %q, want %q", ev.scope.vars["v"], "a a")
+	}
 }

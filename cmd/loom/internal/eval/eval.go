@@ -1,5 +1,7 @@
 package eval
 
+import "github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
+
 // Options are the complete inputs to Evaluate. Tests inject every field.
 type Options struct {
 	File      string            // path to the Loomfile as given (relative or absolute)
@@ -17,4 +19,14 @@ type evaluator struct {
 	root  string // absolute, forward slashes
 	scope *scope
 	funcs map[string]Func
+}
+
+// evalAssign expands the value first, so `x := $x` on an undefined x is an error
+// and `x += $x` doubles the value (immediate expansion, §3.3).
+func (ev *evaluator) evalAssign(a *syntax.Assign) error {
+	value, err := ev.expand(a.Value)
+	if err != nil {
+		return err
+	}
+	return ev.scope.assign(a.P, a.Name, a.Op, value)
 }
