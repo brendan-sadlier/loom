@@ -3,6 +3,8 @@ package eval
 import (
 	"errors"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
@@ -84,4 +86,97 @@ func TestNewScopeOverrideErrors(t *testing.T) {
 			t.Errorf("%s:\n got %s\nwant %s", tt.name, err, tt.want)
 		}
 	}
+}
+
+func TestSplitList(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{`a "b c" d`, []string{"a", "b c", "d"}},
+		{`""`, []string{""}},
+		{`x "y`, []string{"x", "y"}},
+		{"a\tb", []string{"a", "b"}},
+		{`"a \"q\" b"`, []string{`a "q" b`}},
+		{``, nil},
+		{`  a   b  `, []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		if got := splitList(tt.in); !slices.Equal(got, tt.want) || len(got) != len(tt.want) {
+			t.Errorf("splitList(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func testEvaluator(t *testing.T, funcs map[string]Func) *evaluator {
+	t.Helper()
+	s, err := newScope(Options{GOOS: "linux", GOARCH: "amd64"}, "/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.vars["x"] = "one two"
+	return &evaluator{root: "/r", scope: s, funcs: funcs}
+}
+
+var wpos = syntax.Pos{File: "Loomfile", Line: 3, Col: 6}
+
+func word(quoted bool, segs ...syntax.Segment) syntax.Word {
+	return syntax.Word{Pos: wpos, Quoted: quoted, Segs: segs}
+}
+
+func TestExpand(t *testing.T) {
+	var gotArgs []string
+	ev := testEvaluator(t, map[string]Func{
+		"echo": func(c *Call) (string, error) { gotArgs = c.Args; return strings.Join(c.Args, "|"), nil },
+		"fail": func(c *Call) (string, error) { return "", errors.New("boom") },
+	})
+
+	got, err := ev.expand(word(false, syntax.Text{S: "a-"}, syntax.VarRef{Name: "x"}, syntax.Text{S: "-$os"}))
+	if err != nil || got != "a-one two-$os" {
+		t.Errorf("expand = %q, %v", got, err)
+	}
+
+	// Nested call args are expanded and trimmed.
+	call := syntax.Call{Name: "echo", Args: []syntax.Word{
+		word(false, syntax.Text{S: "  "}, syntax.VarRef{Name: "os"}, syntax.Text{S: " "}),
+		word(false, syntax.Call{Name: "echo", Args: []syntax.Word{word(false, syntax.Text{S: " in "})}}),
+	}}
+	got, err = ev.expand(word(false, call))
+	if err != nil || got != "linux|in" || !slices.Equal(gotArgs, []string{"linux", "in"}) {
+		t.Errorf("nested call = %q, %v, args %q", got, err, gotArgs)
+	}
+
+	list, err := ev.expandList(word(false, syntax.VarRef{Name: "x"}))
+	if err != nil || !slices.Equal(list, []string{"one", "two"}) {
+		t.Errorf("expandList = %q, %v", list, err)
+	}
+	list, err = ev.expandList(word(true, syntax.VarRef{Name: "x"}))
+	if err != nil || !slices.Equal(list, []string{"one two"}) {
+		t.Errorf("expandList quoted = %q, %v", list, err)
+	}
+
+	errTests := []struct {
+		w          syntax.Word
+		want, hint string
+	}{
+		{word(false, syntax.VarRef{Name: "y"}), `Loomfile:3:6: undefined variable "y"`, hintUndefined},
+		{word(false, syntax.Call{Name: "glob"}), `Loomfile:3:6: unknown function "glob"`, ""},
+		{word(false, syntax.Call{Name: "fail"}), `Loomfile:3:6: $(fail): boom`, ""},
+		{word(false, syntax.Call{Name: "echo", Args: []syntax.Word{word(false, syntax.VarRef{Name: "z"})}}),
+			`Loomfile:3:6: undefined variable "z"`, hintUndefined},
+	}
+	for _, tt := range errTests {
+		_, err := ev.expand(tt.w)
+		var d *syntax.Diagnostic
+		if !errors.As(err, &d) || err.Error() != tt.want || d.Hint != tt.hint {
+			t.Errorf("err = %v (hint %q), want %q (hint %q)", err, hintOf(d), tt.want, tt.hint)
+		}
+	}
+}
+
+func hintOf(d *syntax.Diagnostic) string {
+	if d == nil {
+		return ""
+	}
+	return d.Hint
 }

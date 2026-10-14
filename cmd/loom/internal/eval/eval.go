@@ -10,3 +10,11 @@ type Options struct {
 	GOOS      string            // "" = runtime.GOOS
 	GOARCH    string            // "" = runtime.GOARCH
 }
+
+// evaluator holds the state of one Evaluate call. T07 adds the remaining fields.
+type evaluator struct {
+	opts  Options
+	root  string // absolute, forward slashes
+	scope *scope
+	funcs map[string]Func
+}
