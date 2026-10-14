@@ -3,6 +3,8 @@ package eval
 import (
 	"errors"
 	"maps"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -411,5 +413,56 @@ task up: "a b" c
 	if r.Targets[0].String() != "{stem}.o" || !slices.Equal(r.Prereqs, []string{"{stem}.c"}) ||
 		r.Recipe.Lang != model.LangBash || r.Vars["CC"] != "gcc" {
 		t.Errorf("pattern = %+v", r)
+	}
+}
+
+func TestPrereqGlob(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"a.c", "b.c", "sub/c.c", "x.h"} {
+		p := filepath.Join(dir, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := testEvaluator(t, nil)
+	ev.rootOS = dir
+
+	tests := []struct {
+		pat  string
+		want []string
+	}{
+		{"*.c", []string{"a.c", "b.c"}},
+		{"**/*.c", []string{"a.c", "b.c", "sub/c.c"}},
+		{"./sub/*.c", []string{"sub/c.c"}},
+	}
+	for _, tt := range tests {
+		got, err := ev.prereqItems([]syntax.Word{word(false, syntax.Text{S: tt.pat})}, false)
+		if err != nil || !slices.Equal(got, tt.want) {
+			t.Errorf("%s = %q, %v; want %q", tt.pat, got, err, tt.want)
+		}
+	}
+
+	// Mixed with literals: matches are spliced in place.
+	got, err := ev.prereqItems([]syntax.Word{word(false, syntax.Text{S: "z *.h y"})}, false)
+	if err != nil || !slices.Equal(got, []string{"z", "x.h", "y"}) {
+		t.Errorf("splice = %q, %v", got, err)
+	}
+
+	// Pattern rules never glob.
+	got, err = ev.prereqItems([]syntax.Word{word(false, syntax.Text{S: "{stem}.c"})}, true)
+	if err != nil || !slices.Equal(got, []string{"{stem}.c"}) {
+		t.Errorf("pattern = %q, %v", got, err)
+	}
+
+	// Error row 9.
+	w := syntax.Word{Pos: syntax.Pos{File: "Loomfile", Line: 1, Col: 4}, Segs: []syntax.Segment{syntax.Text{S: "*.nothing"}}}
+	_, err = ev.prereqItems([]syntax.Word{w}, false)
+	var d *syntax.Diagnostic
+	if !errors.As(err, &d) || err.Error() != `Loomfile:1:4: prerequisite pattern "*.nothing" matched no files` ||
+		d.Hint != "use $(glob ...) for a list that may be empty" {
+		t.Errorf("no match: %v (hint %q)", err, hintOf(d))
 	}
 }

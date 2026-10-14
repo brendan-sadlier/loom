@@ -18,13 +18,14 @@ type Options struct {
 
 // evaluator holds the state of one Evaluate call. T07 adds rootOS, stack and seen.
 type evaluator struct {
-	opts  Options
-	root  string // absolute, forward slashes
-	scope *scope
-	funcs map[string]Func
-	proj  *model.Project
-	decls map[string]*declState // by target name, or by canonical pattern key (always contains "{stem}")
-	pats  map[string]*model.PatternRule
+	opts   Options
+	root   string // absolute, forward slashes
+	rootOS string // absolute, OS separators
+	scope  *scope
+	funcs  map[string]Func
+	proj   *model.Project
+	decls  map[string]*declState // by target name, or by canonical pattern key (always contains "{stem}")
+	pats   map[string]*model.PatternRule
 }
 
 // fileState is per-file evaluation state. Directives like `shell` do not leak across includes.

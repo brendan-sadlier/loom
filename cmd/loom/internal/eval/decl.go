@@ -1,12 +1,16 @@
 package eval
 
 import (
+	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/model"
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
+
+	doublestar "github.com/bmatcuk/doublestar/v4"
 )
 
 // declState tracks positions needed for merge diagnostics.
@@ -239,7 +243,8 @@ func (ev *evaluator) prereqLists(prereqs, orderOnly []syntax.Word, pattern bool)
 	return normal, order, nil
 }
 
-// prereqItems expands and cleans prerequisite words. T06 adds globbing here.
+// prereqItems expands, globs and cleans prerequisite words.
+// Items in pattern rules are never globbed (they may contain {stem}).
 func (ev *evaluator) prereqItems(words []syntax.Word, pattern bool) ([]string, error) {
 	var out []string
 	for _, w := range words {
@@ -248,6 +253,14 @@ func (ev *evaluator) prereqItems(words []syntax.Word, pattern bool) ([]string, e
 			return nil, err
 		}
 		for _, item := range items {
+			if !pattern && isGlob(item) {
+				matches, err := ev.globPrereq(w.Pos, item)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, matches...)
+				continue
+			}
 			_, isPat, err := model.ParsePattern(item)
 			if err != nil {
 				return nil, syntax.Errorf(w.Pos, "%v", err)
@@ -267,6 +280,41 @@ func (ev *evaluator) prereqItems(words []syntax.Word, pattern bool) ([]string, e
 			out = append(out, name)
 		}
 	}
+	return out, nil
+}
+
+// globPrerequisite expands item against the filesystem relative to the project root.
+// Results are root-relative slash paths (absolute patterns yield absolute paths), sorted.
+// Zero matches is an error: a silently empty prerequisite list hides rebuild bugs (§3.5).
+func (ev *evaluator) globPrereq(pos syntax.Pos, item string) ([]string, error) {
+	pat := filepath.FromSlash(item)
+	abs := filepath.IsAbs(pat)
+	if !abs {
+		pat = filepath.Join(ev.rootOS, pat)
+	}
+	matches, err := doublestar.FilepathGlob(pat)
+	if err != nil {
+		return nil, syntax.Errorf(pos, "invalid glob pattern %q: %v", item, err)
+	}
+	if len(matches) == 0 {
+		return nil, &syntax.Diagnostic{
+			Pos:  pos,
+			Msg:  fmt.Sprintf("prerequisite pattern %q matched no files", item),
+			Hint: "use $(glob ...) for a list that may be empty",
+		}
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if !abs {
+			rel, err := filepath.Rel(ev.rootOS, m)
+			if err != nil {
+				return nil, fmt.Errorf("glob %q: %w", item, err)
+			}
+			m = rel
+		}
+		out = append(out, filepath.ToSlash(m))
+	}
+	slices.Sort(out)
 	return out, nil
 }
 
