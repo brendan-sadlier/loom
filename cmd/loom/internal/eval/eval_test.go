@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/brendan-sadlier/loom/cmd/loom/internal/model"
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
 )
 
@@ -301,5 +302,114 @@ func TestEvalAssign(t *testing.T) {
 	}
 	if ev.scope.vars["v"] != "a a" {
 		t.Errorf("x += $x = %q, want %q", ev.scope.vars["v"], "a a")
+	}
+}
+
+func evalSource(t *testing.T, src string) (*model.Project, error) {
+	t.Helper()
+	f, err := syntax.Parse("Loomfile", []byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ev := testEvaluator(t, nil)
+	ev.proj = &model.Project{Order: []string{}, Targets: map[string]*model.Target{}}
+	ev.decls = map[string]*declState{}
+	ev.pats = map[string]*model.PatternRule{}
+	fs := &fileState{rel: "Loomfile"}
+	for _, it := range f.Items {
+		switch it := it.(type) {
+		case *syntax.Assign:
+			err = ev.evalAssign(it)
+		case *syntax.TargetDecl:
+			err = ev.evalTarget(it, fs)
+		case *syntax.TaskDecl:
+			err = ev.evalTask(it, fs)
+		default:
+			t.Fatalf("unexpected item %T", it)
+		}
+		if err != nil {
+			return ev.proj, err
+		}
+	}
+	return ev.proj, nil
+}
+
+func TestDeclErrors(t *testing.T) {
+	tests := []struct{ src, want string }{
+		{"a: {\n  x\n}\na: {\n  y\n}\n", `Loomfile:4:1: target "a" already has a recipe (declared at Loomfile:1:1)`},
+		{"task t: x\nt: y\n", `Loomfile:2:1: "t" is declared as both a task and a file target (see Loomfile:1:1)`},
+		{"a: @go\n", `Loomfile:1:1: attribute "@go" requires a recipe body on the same declaration`},
+		{"a: b @go @bash {\n  x\n}\n", `Loomfile:1:1: conflicting attributes "@go" and "@bash"`},
+		{"a%b%c: x\n", `Loomfile:1:1: pattern "a%b%c" has more than one wildcard`},
+		{"a: {stem}.c\n", `Loomfile:1:4: "{stem}" is only allowed in pattern rules`},
+		{"%.o lib: x\n", `Loomfile:1:1: cannot mix pattern and literal target names in one declaration`},
+		{"a*: x\n", `Loomfile:1:1: target name "a*" contains glob characters`},
+		{"task t a\ntask t b\n", `Loomfile:2:1: parameters for task "t" already declared at Loomfile:1:1`},
+		{"%.o: {\n  x\n}\n{stem}.o: {\n  y\n}\n", `Loomfile:4:1: target "{stem}.o" already has a recipe (declared at Loomfile:1:1)`},
+	}
+	for _, tt := range tests {
+		_, err := evalSource(t, tt.src)
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("%q:\n got %v\nwant %s", tt.src, err, tt.want)
+		}
+	}
+}
+
+func TestDeclMerge(t *testing.T) {
+	p, err := evalSource(t, `srcs := main.go util.go
+
+# Build it.
+bin/app: $srcs | bin
+./bin/app: go.mod main.go
+bin/app: CGO_ENABLED := 0
+bin/app: {
+    go build -o $out .
+}
+
+fmt lint: {
+    go $out ./...
+}
+
+task bench pkg="./$os" count {
+    x
+}
+
+%.o: ./%.c @bash {
+    cc
+}
+{stem}.o: CC := gcc
+
+task up: "a b" c
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"bin/app", "fmt", "lint", "bench", "up"}; !slices.Equal(p.Order, want) {
+		t.Errorf("Order = %q, want %q", p.Order, want)
+	}
+	app := p.Targets["bin/app"]
+	if !slices.Equal(app.Prereqs, []string{"main.go", "util.go", "go.mod"}) ||
+		!slices.Equal(app.OrderOnly, []string{"bin"}) || app.Doc != "Build it." ||
+		app.Pos.Line != 4 || app.Vars["CGO_ENABLED"] != "0" ||
+		app.Recipe == nil || app.Recipe.Pos.Line != 8 || app.Recipe.Lang != model.LangSh {
+		t.Errorf("bin/app = %+v recipe %+v", app, app.Recipe)
+	}
+	if p.Targets["fmt"].Recipe == p.Targets["lint"].Recipe {
+		t.Error("multi-name targets share a *Recipe")
+	}
+	b := p.Targets["bench"]
+	if b.Kind != model.KindTask || len(b.Params) != 2 || *b.Params[0].Default != "./linux" || b.Params[1].Default != nil {
+		t.Errorf("bench = %+v", b)
+	}
+	if !slices.Equal(p.Targets["up"].Prereqs, []string{"a b", "c"}) {
+		t.Errorf("up prereqs = %q", p.Targets["up"].Prereqs)
+	}
+	if len(p.Patterns) != 1 {
+		t.Fatalf("patterns = %d", len(p.Patterns))
+	}
+	r := p.Patterns[0]
+	if r.Targets[0].String() != "{stem}.o" || !slices.Equal(r.Prereqs, []string{"{stem}.c"}) ||
+		r.Recipe.Lang != model.LangBash || r.Vars["CC"] != "gcc" {
+		t.Errorf("pattern = %+v", r)
 	}
 }
