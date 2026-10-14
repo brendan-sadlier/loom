@@ -1,0 +1,35 @@
+shell bash
+
+CC := gcc
+msg := "hello # not a comment" \#literal
+dollar := cost $$5
+empty :=
+path := ${CC}x
+
+if $os == windows {
+    rm := del /q
+} else if $(env CI) && !$(exists .nocache) {
+    rm := rm -rf --verbose
+} else {
+    if ($os == linux || $os == darwin) {
+        rm := rm -rf
+    }
+}
+
+bin/app: CGO_ENABLED := 0
+bin/app: main.go \
+    util.go
+
+fmt lint: {
+    go $out ./...
+}
+
+%.o: %.c @bash {
+	$CC -c $in -o $out
+}
+
+# First line.
+# Second line.
+task deploy env target="prod": lint | fmt @sh {
+    echo $env $target
+}
