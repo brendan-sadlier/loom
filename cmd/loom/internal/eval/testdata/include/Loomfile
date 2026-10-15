@@ -1,0 +1,2 @@
+include tools/*.loom extra.loom
+all: $tool_out

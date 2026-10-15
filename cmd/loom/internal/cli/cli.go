@@ -6,6 +6,7 @@ import (
 	"io"
 	"runtime/debug"
 
+	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
 	"github.com/spf13/cobra"
 )
 
@@ -58,18 +59,20 @@ func Main(args []string, stdio Stdio) int {
 	root.SetOut(stdio.Stdout)
 	root.SetErr(stdio.Stderr)
 
-	if err := root.Execute(); err != nil {
-		_, err := fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
-		if err != nil {
-			return 0
-		}
-		var ec ExitCoder
-		if errors.As(err, &ec) {
-			return ec.ExitCode()
-		}
-		return ExitLoomfile
+	err := root.Execute()
+	if err == nil {
+		return ExitOK
 	}
-	return ExitOK
+	fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
+	var diag *syntax.Diagnostic
+	if errors.As(err, &diag) && diag.Hint != "" {
+		fmt.Fprintf(stdio.Stderr, "  hint: %s\n", diag.Hint)
+	}
+	var ec ExitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return ExitLoomfile
 }
 
 func newRootCmd(stdio Stdio) *cobra.Command {
@@ -87,6 +90,6 @@ func newRootCmd(stdio Stdio) *cobra.Command {
 	}
 	cmd.SetVersionTemplate("loom {{.Version}}\n")
 	cmd.CompletionOptions.DisableDefaultCmd = true
-	_ = stdio
+	cmd.AddCommand(newDumpCmd(stdio))
 	return cmd
 }

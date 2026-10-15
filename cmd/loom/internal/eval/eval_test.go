@@ -1,18 +1,125 @@
 package eval
 
 import (
+	"bytes"
 	"errors"
+	"flag"
 	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/model"
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
 )
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+// goldenCases drive TestGolden. File is relative to testdata/.
+var goldenCases = []struct {
+	name      string
+	file      string
+	overrides map[string]string
+}{
+	{"vars", "vars.loom", map[string]string{"cli": "from-cli"}},
+	{"targets", "targets.loom", nil},
+	{"include", "include/Loomfile", nil},
+}
+
+func goldenOptions(file string, overrides map[string]string) Options {
+	return Options{
+		File:      file,
+		Overrides: overrides,
+		Environ:   []string{"ci=yes", "HOME=/home/t"},
+		LoomPath:  "/usr/bin/loom",
+		GOOS:      "linux",
+		GOARCH:    "amd64",
+	}
+}
+
+func TestGolden(t *testing.T) {
+	for _, tc := range goldenCases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Evaluate(goldenOptions(filepath.Join("testdata", filepath.FromSlash(tc.file)), tc.overrides))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := []byte(strings.ReplaceAll(p.Dump(), p.Root, "$ROOT"))
+			path := filepath.Join("testdata", tc.name+".golden")
+			if *update {
+				if err := os.WriteFile(path, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n")) // Windows checkouts
+			if !bytes.Equal(got, want) {
+				t.Errorf("mismatch:\n--- got ---\n%s--- want ---\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestErrors(t *testing.T) {
+	tests := []struct {
+		src       string
+		overrides map[string]string
+		want      string
+		hint      string
+	}{
+		{"x := $y", nil, `Loomfile:1:6: undefined variable "y"`, hintUndefined},
+		{"x += a", nil, `Loomfile:1:1: cannot append to undefined variable "x"`, ""},
+		{"os := linux", nil, `Loomfile:1:1: cannot assign to built-in variable "os"`, ""},
+		{"out := x", nil, `Loomfile:1:1: "out" is reserved for recipes and cannot be assigned`, ""},
+		{"a: {\n  x\n}\na: {\n  y\n}", nil, `Loomfile:4:1: target "a" already has a recipe (declared at Loomfile:1:1)`, ""},
+		{"task t: x\nt: y", nil, `Loomfile:2:1: "t" is declared as both a task and a file target (see Loomfile:1:1)`, ""},
+		{"a: @go", nil, `Loomfile:1:1: attribute "@go" requires a recipe body on the same declaration`, ""},
+		{"a: b @go @bash {\n  x\n}", nil, `Loomfile:1:1: conflicting attributes "@go" and "@bash"`, ""},
+		{"a: *.nothing", nil, `Loomfile:1:4: prerequisite pattern "*.nothing" matched no files`, "use $(glob ...) for a list that may be empty"},
+		{"a%b%c: x", nil, `Loomfile:1:1: pattern "a%b%c" has more than one wildcard`, ""},
+		{"a: {stem}.c", nil, `Loomfile:1:4: "{stem}" is only allowed in pattern rules`, ""},
+		{"%.o lib: x", nil, `Loomfile:1:1: cannot mix pattern and literal target names in one declaration`, ""},
+		{"x := $(glob *.go)", nil, `Loomfile:1:6: unknown function "glob"`, ""},
+		{"if $x {\n}", nil, `Loomfile:1:1: "if" is not implemented until Phase 09`, ""},
+		{"dotenv", nil, `Loomfile:1:1: "dotenv" is not implemented until Phase 11`, ""},
+		{"include missing.loom", nil, `Loomfile:1:9: included file "missing.loom" not found`, ""},
+		{"shell bash\nshell zsh", nil, `Loomfile:2:1: shell already set for this file at Loomfile:1:1`, ""},
+		{"a*: x", nil, `Loomfile:1:1: target name "a*" contains glob characters`, ""},
+		{"task t a\ntask t b", nil, `Loomfile:2:1: parameters for task "t" already declared at Loomfile:1:1`, ""},
+		{"", map[string]string{"os": "x"}, `command line: cannot override built-in variable "os"`, ""},
+		{"", map[string]string{"1x": "y"}, `command line: invalid variable name "1x" in command-line override`, ""},
+	}
+	for i, tt := range tests {
+		t.Run(strconv.Itoa(i+1), func(t *testing.T) {
+			dir := writeTree(t, map[string]string{"Loomfile": tt.src + "\n"})
+			_, err := Evaluate(goldenOptions(filepath.Join(dir, "Loomfile"), tt.overrides))
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("\n got %v\nwant %s", err, tt.want)
+			}
+			var d *syntax.Diagnostic
+			if !errors.As(err, &d) {
+				t.Fatalf("err %T is not *syntax.Diagnostic", err)
+			}
+			if d.Hint != tt.hint {
+				t.Errorf("hint = %q, want %q", d.Hint, tt.hint)
+			}
+		})
+	}
+}
+
+func TestIncludeCycle(t *testing.T) {
+	_, err := Evaluate(goldenOptions(filepath.Join("testdata", "cycle", "Loomfile"), nil))
+	if err == nil || err.Error() != "a.loom:1:9: include cycle: Loomfile -> a.loom -> Loomfile" {
+		t.Errorf("err = %v", err)
+	}
+}
 
 func TestEnvLookup(t *testing.T) {
 	e := NewEnv([]string{"A=1", "B=", "A=2", "=C:=C:\\x", "EQ=a=b", "junk"})
@@ -336,27 +443,6 @@ func evalSource(t *testing.T, src string) (*model.Project, error) {
 	return ev.proj, nil
 }
 
-func TestDeclErrors(t *testing.T) {
-	tests := []struct{ src, want string }{
-		{"a: {\n  x\n}\na: {\n  y\n}\n", `Loomfile:4:1: target "a" already has a recipe (declared at Loomfile:1:1)`},
-		{"task t: x\nt: y\n", `Loomfile:2:1: "t" is declared as both a task and a file target (see Loomfile:1:1)`},
-		{"a: @go\n", `Loomfile:1:1: attribute "@go" requires a recipe body on the same declaration`},
-		{"a: b @go @bash {\n  x\n}\n", `Loomfile:1:1: conflicting attributes "@go" and "@bash"`},
-		{"a%b%c: x\n", `Loomfile:1:1: pattern "a%b%c" has more than one wildcard`},
-		{"a: {stem}.c\n", `Loomfile:1:4: "{stem}" is only allowed in pattern rules`},
-		{"%.o lib: x\n", `Loomfile:1:1: cannot mix pattern and literal target names in one declaration`},
-		{"a*: x\n", `Loomfile:1:1: target name "a*" contains glob characters`},
-		{"task t a\ntask t b\n", `Loomfile:2:1: parameters for task "t" already declared at Loomfile:1:1`},
-		{"%.o: {\n  x\n}\n{stem}.o: {\n  y\n}\n", `Loomfile:4:1: target "{stem}.o" already has a recipe (declared at Loomfile:1:1)`},
-	}
-	for _, tt := range tests {
-		_, err := evalSource(t, tt.src)
-		if err == nil || err.Error() != tt.want {
-			t.Errorf("%q:\n got %v\nwant %s", tt.src, err, tt.want)
-		}
-	}
-}
-
 func TestDeclMerge(t *testing.T) {
 	p, err := evalSource(t, `srcs := main.go util.go
 
@@ -522,29 +608,6 @@ func TestEvaluateInclude(t *testing.T) {
 	}
 	if p.Overrides != nil || p.Vars["root"] != p.Root {
 		t.Errorf("overrides %v, root var %q", p.Overrides, p.Vars["root"])
-	}
-}
-
-func TestIncludeCycle(t *testing.T) {
-	_, err := evalTree(t, map[string]string{"Loomfile": "include a.loom\n", "a.loom": "include Loomfile\n"})
-	if err == nil || err.Error() != "a.loom:1:9: include cycle: Loomfile -> a.loom -> Loomfile" {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestEvaluateErrors(t *testing.T) {
-	tests := []struct{ src, want string }{
-		{"x := $(glob *.go)\n", `Loomfile:1:6: unknown function "glob"`},
-		{"if $x {\n}\n", `Loomfile:1:1: "if" is not implemented until Phase 09`},
-		{"dotenv\n", `Loomfile:1:1: "dotenv" is not implemented until Phase 11`},
-		{"include missing.loom\n", `Loomfile:1:9: included file "missing.loom" not found`},
-		{"shell bash\nshell zsh\n", `Loomfile:2:1: shell already set for this file at Loomfile:1:1`},
-	}
-	for _, tt := range tests {
-		_, err := evalTree(t, map[string]string{"Loomfile": tt.src})
-		if err == nil || err.Error() != tt.want {
-			t.Errorf("%q:\n got %v\nwant %s", tt.src, err, tt.want)
-		}
 	}
 }
 
