@@ -1,0 +1,24 @@
+-- dump_vars.txtar --
+# __dump prints the evaluated model; CLI overrides beat file assignments.
+exec loom __dump --text x=cli
+stdout '^var x = "cli"$'
+stdout '^var y = "a b"$'
+stdout '^override x = "cli"$'
+stdout '^target out\.txt @Loomfile:3:1$'
+stdout '^  prereqs: in\.txt$'
+stdout '^  recipe sh @Loomfile:4:1$'
+stdout '^  \| cat \$in > \$out$'
+
+# Undefined variables are errors with a hint.
+exitcode 2 loom __dump --text -f bad.loom
+stderr '^loom: bad\.loom:1:6: undefined variable "nope"$'
+stderr '^  hint: define it with ":=" before use'
+
+-- Loomfile --
+x := file
+y := a b
+out.txt: in.txt {
+    cat $in > $out
+}
+-- bad.loom --
+z := $nope

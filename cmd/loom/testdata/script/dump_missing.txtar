@@ -1,0 +1,8 @@
+-- dump_missing.txtar --
+# No Loomfile in the directory.
+exitcode 2 loom __dump
+stderr '^loom: Loomfile: file not found$'
+stderr '^  hint: use -f FILE or -C DIR$'
+
+-- README --
+not a Loomfile

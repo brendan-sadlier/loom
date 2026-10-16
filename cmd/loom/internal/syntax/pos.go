@@ -16,9 +16,13 @@ type Pos struct {
 // IsValid reports whether p refers to a real source line.
 func (p Pos) IsValid() bool { return p.Line > 0 }
 
-// String returns "file:line:col", "file:line" when Col is 0, or "?" when p is invalid.
+// String returns "file:line:col", "file:line" when Col is 0, "file" when only the
+// file is known (e.g. "command line"), or "?" when p is entirely unknown.
 func (p Pos) String() string {
 	if !p.IsValid() {
+		if p.File != "" {
+			return p.File
+		}
 		return "?"
 	}
 	s := p.File + ":" + strconv.Itoa(p.Line)
@@ -27,6 +31,9 @@ func (p Pos) String() string {
 	}
 	return s
 }
+
+// MarshalText encodes p as String() so JSON dumps read "Loomfile:3:1".
+func (p Pos) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
 
 // Diagnostic is a user-facing error anchored to a position.
 type Diagnostic struct {

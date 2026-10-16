@@ -1,0 +1,10 @@
+bin := ./bin
+app := $bin/server$exe
+flags ?= -trimpath
+flags += -v
+ci ?= not-ci
+cli := from-file
+msg := "a b" c $$5 \# x
+empty :=
+empty += first
+path := ${bin}/x

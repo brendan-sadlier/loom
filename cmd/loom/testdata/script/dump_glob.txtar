@@ -1,0 +1,15 @@
+-- dump_glob.txtar --
+exec loom __dump --text
+stdout '^  prereqs: a\.c b\.c sub/c\.c$'
+
+exitcode 2 loom __dump --text -f none.loom
+stderr '^loom: none\.loom:1:6: prerequisite pattern "\*\.h" matched no files$'
+stderr '^  hint: use \$\(glob \.\.\.\) for a list that may be empty$'
+
+-- Loomfile --
+lib: **/*.c
+-- none.loom --
+lib: *.h
+-- a.c --
+-- b.c --
+-- sub/c.c --

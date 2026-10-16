@@ -1,0 +1,22 @@
+root $ROOT
+file $ROOT/Loomfile
+file $ROOT/tools/a.loom
+file $ROOT/tools/b.loom
+file $ROOT/extra.loom
+var arch = "amd64"
+var exe = ""
+var loom = "/usr/bin/loom"
+var os = "linux"
+var root = "$ROOT"
+var tool_out = "a.out"
+target a.out @tools/a.loom:2:1
+  recipe sh @tools/a.loom:3:1
+  | touch $out
+task b @tools/b.loom:2:1
+  recipe sh shell="bash" @tools/b.loom:3:1
+  | echo b
+task extra @extra.loom:2:1
+  recipe sh @extra.loom:3:1
+  | echo extra
+target all @Loomfile:2:1
+  prereqs: a.out

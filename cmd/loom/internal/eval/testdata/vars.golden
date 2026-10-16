@@ -1,0 +1,16 @@
+root $ROOT
+file $ROOT/vars.loom
+var app = "./bin/server"
+var arch = "amd64"
+var bin = "./bin"
+var ci = "yes"
+var cli = "from-cli"
+var empty = "first"
+var exe = ""
+var flags = "-trimpath -v"
+var loom = "/usr/bin/loom"
+var msg = "\"a b\" c $5 # x"
+var os = "linux"
+var path = "./bin/x"
+var root = "$ROOT"
+override cli = "from-cli"

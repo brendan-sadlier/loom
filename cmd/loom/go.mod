@@ -3,6 +3,7 @@ module github.com/brendan-sadlier/loom/cmd/loom
 go 1.27.2
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/spf13/cobra v1.10.2
 )

@@ -1,0 +1,12 @@
+-- dump_json.txtar --
+exec loom __dump
+stdout '"kind": "task"'
+stdout '"lang": "go"'
+stdout '"pos": "Loomfile:1:1"'
+stdout '"pos": "Loomfile:2:1"'
+stdout '"body": "return nil\\n"'
+
+-- Loomfile --
+task rel @go {
+    return nil
+}

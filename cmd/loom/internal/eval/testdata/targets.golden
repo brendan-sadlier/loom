@@ -1,0 +1,48 @@
+root $ROOT
+file $ROOT/targets.loom
+var arch = "amd64"
+var exe = ""
+var loom = "/usr/bin/loom"
+var os = "linux"
+var root = "$ROOT"
+var srcs = "main.go util.go"
+target bin/app @targets.loom:4:1 doc="Build it."
+  prereqs: main.go util.go go.mod
+  orderonly: bin
+  var CGO_ENABLED = "0"
+  recipe sh @targets.loom:8:1
+  | go build -o $out .
+target bin @targets.loom:11:1
+  recipe sh @targets.loom:12:1
+  | mkdir -p $out
+target fmt @targets.loom:15:1
+  recipe sh @targets.loom:16:1
+  | go $out ./...
+target lint @targets.loom:15:1
+  recipe sh @targets.loom:16:1
+  | go $out ./...
+task test @targets.loom:20:1 doc="Test things."
+  prereqs: bin/app lint
+  recipe sh @targets.loom:21:1
+  | go test ./...
+task bench @targets.loom:24:1
+  params: pkg="./..." count
+  recipe sh @targets.loom:25:1
+  | go test -bench . $pkg
+task release @targets.loom:28:1
+  prereqs: test
+  recipe go @targets.loom:29:1
+  | return nil
+task up @targets.loom:40:1
+  prereqs: "a b" c
+pattern @targets.loom:32:1 targets={stem}.o
+  prereqs: {stem}.c
+  recipe bash @targets.loom:33:1
+  | $CC -c $in -o $out
+pattern @targets.loom:36:1 targets={stem}.pb.go
+  prereqs: proto/{stem}.proto
+  orderonly: gen
+  recipe sh @targets.loom:37:1
+  | protoc $in
+go @targets.loom:43:1
+  | func helper() {}

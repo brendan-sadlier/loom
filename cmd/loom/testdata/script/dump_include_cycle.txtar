@@ -1,0 +1,8 @@
+-- dump_include_cycle.txtar --
+exitcode 2 loom __dump
+stderr '^loom: a\.loom:1:9: include cycle: Loomfile -> a\.loom -> Loomfile$'
+
+-- Loomfile --
+include a.loom
+-- a.loom --
+include Loomfile

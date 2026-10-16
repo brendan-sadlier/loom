@@ -21,7 +21,7 @@ const (
 // nil means "may import any internal package".
 var allowed = map[string][]string{
 	"syntax":   {},
-	"model":    {},
+	"model":    {"syntax"},
 	"eval":     {"syntax", "model"},
 	"graph":    {"model"},
 	"state":    {"model"},

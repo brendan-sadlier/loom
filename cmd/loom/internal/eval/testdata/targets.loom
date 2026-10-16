@@ -1,0 +1,44 @@
+srcs := main.go util.go
+
+# Build it.
+bin/app: $srcs | bin
+./bin/app: go.mod
+bin/app: CGO_ENABLED := 0
+bin/app: {
+    go build -o $out .
+}
+
+bin: {
+    mkdir -p $out
+}
+
+fmt lint: {
+    go $out ./...
+}
+
+# Test things.
+task test: bin/app lint {
+    go test ./...
+}
+
+task bench pkg="./..." count {
+    go test -bench . $pkg
+}
+
+task release: test @go {
+    return nil
+}
+
+%.o: %.c @bash {
+    $CC -c $in -o $out
+}
+
+{stem}.pb.go: proto/{stem}.proto | gen {
+    protoc $in
+}
+
+task up: "a b" c
+
+go {
+    func helper() {}
+}
