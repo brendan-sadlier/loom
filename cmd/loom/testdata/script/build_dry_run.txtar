@@ -1,0 +1,20 @@
+# -n echoes every recipe that would run and writes nothing.
+exec loom -n out.txt
+stdout '^→ a\.txt$'
+stdout '^→ out\.txt$'
+stdout '^  echo hi > \$out$'
+! exists a.txt
+! exists out.txt
+! exists .loom
+
+# -n ignores -q.
+exec loom -n -q out.txt
+stdout '^→ out\.txt$'
+
+-- Loomfile --
+a.txt: {
+    echo a > $out
+}
+out.txt: a.txt {
+    echo hi > $out
+}

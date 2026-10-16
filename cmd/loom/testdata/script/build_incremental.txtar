@@ -1,0 +1,43 @@
+# First build: both recipes run, in dependency order.
+exec loom out.txt
+stdout '^→ mid\.txt$'
+stdout '^→ out\.txt$'
+exists out.txt
+grep '^hello$' out.txt
+exists .loom/.gitignore
+grep '^\*$' .loom/.gitignore
+
+# Nothing changed: nothing runs.
+exec loom out.txt
+! stdout .
+stderr '^loom: nothing to do$'
+
+# Leaf input newer than everything: both rebuild.
+mtime-after out.txt in.txt
+exec loom out.txt
+stdout '^→ mid\.txt$'
+stdout '^→ out\.txt$'
+
+# Only the intermediate is newer: just out.txt rebuilds.
+mtime-after out.txt mid.txt
+exec loom out.txt
+! stdout 'mid\.txt'
+stdout '^→ out\.txt$'
+
+# -q hides the echo but recipes still run.
+mtime-after out.txt in.txt
+exec loom -q out.txt
+! stdout .
+! stderr .
+
+-- Loomfile --
+mid.txt: in.txt {
+    read -r line < $in
+    echo "$line" > $out
+}
+out.txt: mid.txt {
+    read -r line < $in
+    echo "$line" > $out
+}
+-- in.txt --
+hello
