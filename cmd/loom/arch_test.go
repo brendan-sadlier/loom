@@ -23,11 +23,11 @@ var allowed = map[string][]string{
 	"syntax":   {},
 	"model":    {"syntax"},
 	"eval":     {"syntax", "model"},
-	"graph":    {"model"},
+	"graph":    {"model", "syntax"},
 	"state":    {"model"},
 	"shell":    {},
 	"gorecipe": {"model"},
-	"execute":  {"graph", "state", "shell", "gorecipe", "model"},
+	"execute":  {"graph", "state", "shell", "gorecipe", "model", "syntax"},
 	"watch":    {"model", "graph"},
 	"cli":      nil,
 }

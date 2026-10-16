@@ -6,6 +6,7 @@ import (
 	"io"
 	"runtime/debug"
 
+	"github.com/brendan-sadlier/loom/cmd/loom/internal/execute"
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
 
 	"github.com/spf13/cobra"
@@ -68,10 +69,9 @@ func Main(args []string, stdio Stdio) int {
 	if err != nil {
 		return 0
 	}
-	var diag *syntax.Diagnostic
-	if errors.As(err, &diag) && diag.Hint != "" {
-		_, err2 := fmt.Fprintf(stdio.Stderr, "  hint: %s\n", diag.Hint)
-		if err2 != nil {
+	if h := hintOf(err); h != "" {
+		_, err := fmt.Fprintf(stdio.Stderr, "  hint: %s\n", h)
+		if err != nil {
 			return 0
 		}
 	}
@@ -83,6 +83,7 @@ func Main(args []string, stdio Stdio) int {
 }
 
 func newRootCmd(stdio Stdio) *cobra.Command {
+	f := &runFlags{}
 	cmd := &cobra.Command{
 		Use:           "loom [flags] [VAR=value]... [TARGET [PARAMS...]]...",
 		Short:         "Build targets from a Loomfile using shell or Go recipes",
@@ -91,12 +92,32 @@ func newRootCmd(stdio Stdio) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Replaced in Phase 03.
-			return errors.New("building targets is not implemented yet (Phase 03)")
+			return run(cmd.Context(), stdio, f, args)
 		},
 	}
+	fl := cmd.Flags()
+	// TODO(P05-T01): default to runtime.NumCPU().
+	fl.IntVarP(&f.jobs, "jobs", "j", 1, "number of recipes to run in parallel")
+	fl.BoolVarP(&f.dryRun, "dry-run", "n", false, "print recipes that would run without running them")
+	fl.BoolVarP(&f.quiet, "quiet", "q", false, "do not echo recipes")
+	fl.StringVarP(&f.file, "file", "f", "Loomfile", "build file")
+	fl.StringVarP(&f.dir, "directory", "C", "", "change to `dir` before doing anything")
+	fl.BoolVarP(&f.list, "list", "l", false, "list targets")
+	fl.StringVar(&f.color, "color", "auto", "colour output: auto|always|never")
 	cmd.SetVersionTemplate("loom {{.Version}}\n")
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.AddCommand(newDumpCmd(stdio))
 	return cmd
+}
+
+func hintOf(err error) string {
+	var diag *syntax.Diagnostic
+	if errors.As(err, &diag) {
+		return diag.Hint
+	}
+	var env *execute.EnvError
+	if errors.As(err, &env) {
+		return env.Hint
+	}
+	return ""
 }

@@ -1,0 +1,13 @@
+{
+  "target": "bin/server",
+  "kind": "file",
+  "out": "bin/server",
+  "in": "main.go",
+  "deps": ["main.go", "go.mod"],
+  "changed": ["main.go"],
+  "stem": "",
+  "params": {"pkg": "./..."},
+  "vars": {"bin": "./bin"},
+  "root": "/abs/project",
+  "jobs": 8
+}

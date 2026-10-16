@@ -1,0 +1,39 @@
+# No arguments and no `default` target: list targets.
+exec loom
+stdout '^Targets:$'
+stdout '^  build +Build the thing\.$'
+stdout '^  test +Run tests\.$'
+! stdout 'pattern'
+
+# --list is explicit.
+exec loom --list
+stdout '^Targets:$'
+
+# No arguments with a `default` target runs it; default is listed first.
+exec loom -f withdefault.loom
+stdout '^→ default$'
+stdout '^running default$'
+exec loom -f withdefault.loom --list
+stdout '^Targets:\n  default +Entry\.\n  other'
+
+-- Loomfile --
+# Build the thing.
+task build {
+    echo building
+}
+# Run tests.
+# Second doc line is not listed.
+task test: build {
+    echo testing
+}
+%.o: %.c {
+    echo pattern
+}
+-- withdefault.loom --
+task other {
+    echo other
+}
+# Entry.
+task default {
+    echo running default
+}
