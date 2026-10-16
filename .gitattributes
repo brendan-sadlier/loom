@@ -1,1 +1,3 @@
 cmd/loom/internal/syntax/testdata/** -text
+cmd/loom/testdata/** text eol=lf
+cmd/loom/internal/eval/testdata/** text eol=lf
