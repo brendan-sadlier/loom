@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/eval"
+
 	"github.com/spf13/cobra"
 )
 

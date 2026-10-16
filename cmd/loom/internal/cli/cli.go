@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 
 	"github.com/brendan-sadlier/loom/cmd/loom/internal/syntax"
+
 	"github.com/spf13/cobra"
 )
 
@@ -63,10 +64,16 @@ func Main(args []string, stdio Stdio) int {
 	if err == nil {
 		return ExitOK
 	}
-	fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
+	_, err = fmt.Fprintf(stdio.Stderr, "loom: %v\n", err)
+	if err != nil {
+		return 0
+	}
 	var diag *syntax.Diagnostic
 	if errors.As(err, &diag) && diag.Hint != "" {
-		fmt.Fprintf(stdio.Stderr, "  hint: %s\n", diag.Hint)
+		_, err2 := fmt.Fprintf(stdio.Stderr, "  hint: %s\n", diag.Hint)
+		if err2 != nil {
+			return 0
+		}
 	}
 	var ec ExitCoder
 	if errors.As(err, &ec) {
